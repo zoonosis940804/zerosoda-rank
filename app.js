@@ -140,14 +140,46 @@ const LEGACY_ITEM_NAMES_BY_ID = {
   trevi: ["트레비"]
 };
 
+const TIER_SCORE = {
+  S: 7,
+  A: 6,
+  B: 5,
+  C: 4,
+  D: 3,
+  E: 2,
+  F: 1
+};
+
+const SCORE_TO_TIER = {
+  7: "S",
+  6: "A",
+  5: "B",
+  4: "C",
+  3: "D",
+  2: "E",
+  1: "F"
+};
+
 const app = {
   items: [],
   assignments: {},
   laneContainers: {},
+  liveLaneContainers: {},
+  runtimeConfig: {
+    supabaseUrl: "",
+    supabaseAnonKey: ""
+  },
+  supabaseClient: null,
+  useRemoteStats: false,
+  remoteStatsCache: null,
+  realtimeChannel: null,
+  remoteRefreshTimer: null,
+  isResultFocus: false,
   detailItemId: null,
   editingItemId: null,
   activeQuickItemId: null,
   activeSwipeItemId: null,
+  lastSubmittedSnapshot: null,
   swipePointerId: null,
   swipeStartX: 0,
   swipeStartY: 0,
@@ -163,7 +195,13 @@ const app = {
   unratedCountEl: document.getElementById("unratedCount"),
   resetBtn: document.getElementById("resetBtn"),
   submitBtn: document.getElementById("submitBtn"),
+  editModeBtn: document.getElementById("editModeBtn"),
   viewResultBtn: document.getElementById("viewResultBtn"),
+  liveBoardPanel: document.getElementById("liveBoardPanel"),
+  liveTiersEl: document.getElementById("liveTiers"),
+  liveBoardMeta: document.getElementById("liveBoardMeta"),
+  liveNoSample: document.getElementById("liveNoSample"),
+  liveNoSampleCount: document.getElementById("liveNoSampleCount"),
   resultsPanel: document.getElementById("resultsPanel"),
   statusText: document.getElementById("statusText"),
   participantCount: document.getElementById("participantCount"),
@@ -171,6 +209,8 @@ const app = {
   summarySamples: document.getElementById("summarySamples"),
   summaryDrinks: document.getElementById("summaryDrinks"),
   tierTotals: document.getElementById("tierTotals"),
+  toggleResultTableBtn: document.getElementById("toggleResultTableBtn"),
+  resultTableWrap: document.getElementById("resultTableWrap"),
   resultTableBody: document.getElementById("resultTableBody"),
   detailModal: document.getElementById("detailModal"),
   detailTitle: document.getElementById("detailTitle"),
@@ -179,6 +219,7 @@ const app = {
   detailState: document.getElementById("detailState"),
   closeModalBtn: document.getElementById("closeModalBtn"),
   passBtn: document.getElementById("passBtn"),
+  quickPanel: document.getElementById("quickPanel"),
   quickProgress: document.getElementById("quickProgress"),
   quickItemSelect: document.getElementById("quickItemSelect"),
   quickCard: document.getElementById("quickCard"),
@@ -378,6 +419,238 @@ function saveStats(stats) {
   localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify(stats));
 }
 
+function isSupabaseConfigured(config) {
+  return (
+    typeof config?.supabaseUrl === "string" &&
+    typeof config?.supabaseAnonKey === "string" &&
+    config.supabaseUrl.trim() !== "" &&
+    config.supabaseAnonKey.trim() !== ""
+  );
+}
+
+async function loadRuntimeConfig() {
+  try {
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (!response.ok) {
+      return {
+        supabaseUrl: "",
+        supabaseAnonKey: ""
+      };
+    }
+    const data = await response.json();
+    return {
+      supabaseUrl:
+        typeof data?.supabaseUrl === "string" ? data.supabaseUrl.trim() : "",
+      supabaseAnonKey:
+        typeof data?.supabaseAnonKey === "string" ? data.supabaseAnonKey.trim() : ""
+    };
+  } catch {
+    return {
+      supabaseUrl: "",
+      supabaseAnonKey: ""
+    };
+  }
+}
+
+function initSupabaseClient() {
+  if (!isSupabaseConfigured(app.runtimeConfig)) return;
+  const createClient = window.supabase?.createClient;
+  if (typeof createClient !== "function") return;
+
+  try {
+    app.supabaseClient = createClient(
+      app.runtimeConfig.supabaseUrl,
+      app.runtimeConfig.supabaseAnonKey
+    );
+    app.useRemoteStats = true;
+  } catch {
+    app.supabaseClient = null;
+    app.useRemoteStats = false;
+  }
+}
+
+function getStoredStatsSnapshot() {
+  if (app.useRemoteStats && app.remoteStatsCache) {
+    return normalizeStats(app.remoteStatsCache);
+  }
+  return loadStats();
+}
+
+function fillStatsFromTotalsRows(stats, rows) {
+  if (!Array.isArray(rows)) return;
+  rows.forEach((row) => {
+    const drinkId =
+      typeof row?.drink_id === "string" ? row.drink_id.trim() : "";
+    if (!drinkId || !stats.drinks[drinkId]) return;
+    const total = Number(row.total);
+    stats.drinks[drinkId].total =
+      Number.isFinite(total) && total > 0 ? Math.floor(total) : 0;
+
+    const tierMap = {
+      S: Number(row.s),
+      A: Number(row.a),
+      B: Number(row.b),
+      C: Number(row.c),
+      D: Number(row.d),
+      E: Number(row.e),
+      F: Number(row.f)
+    };
+
+    TIERS.forEach((tier) => {
+      const count = tierMap[tier];
+      stats.drinks[drinkId].tiers[tier] =
+        Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    });
+  });
+}
+
+function fillStatsFromRatingRows(stats, rows) {
+  if (!Array.isArray(rows)) return;
+  rows.forEach((row) => {
+    const drinkId =
+      typeof row?.drink_id === "string" ? row.drink_id.trim() : "";
+    const tier = typeof row?.tier === "string" ? row.tier.trim().toUpperCase() : "";
+    if (!drinkId || !TIERS.includes(tier) || !stats.drinks[drinkId]) return;
+    stats.drinks[drinkId].total += 1;
+    stats.drinks[drinkId].tiers[tier] += 1;
+  });
+}
+
+async function fetchRemoteParticipantCount() {
+  if (!app.supabaseClient) return null;
+  const { count, error } = await app.supabaseClient
+    .from("submissions")
+    .select("*", { count: "exact", head: true });
+  if (error) return null;
+  return Number.isFinite(count) && count >= 0 ? count : 0;
+}
+
+async function fetchRemoteStats() {
+  if (!app.supabaseClient) return null;
+
+  const stats = createEmptyStats();
+  let participants = await fetchRemoteParticipantCount();
+
+  const totalsResult = await app.supabaseClient
+    .from("rating_totals")
+    .select("drink_id,total,s,a,b,c,d,e,f");
+
+  if (!totalsResult.error) {
+    fillStatsFromTotalsRows(stats, totalsResult.data);
+    stats.participants = participants ?? 0;
+    return stats;
+  }
+
+  const ratingResult = await app.supabaseClient
+    .from("ratings")
+    .select("drink_id,tier,submission_id");
+
+  if (ratingResult.error) {
+    throw ratingResult.error;
+  }
+
+  fillStatsFromRatingRows(stats, ratingResult.data);
+
+  if (participants === null) {
+    const uniqueSubmissions = new Set();
+    (ratingResult.data || []).forEach((row) => {
+      const submissionId =
+        typeof row?.submission_id === "string" ? row.submission_id : "";
+      if (submissionId) {
+        uniqueSubmissions.add(submissionId);
+      }
+    });
+    participants = uniqueSubmissions.size;
+  }
+
+  stats.participants = participants ?? 0;
+  return stats;
+}
+
+async function refreshRemoteStats() {
+  if (!app.supabaseClient) return false;
+  try {
+    const remote = await fetchRemoteStats();
+    if (!remote) return false;
+    app.remoteStatsCache = normalizeStats(remote);
+    return true;
+  } catch {
+    app.remoteStatsCache = null;
+    return false;
+  }
+}
+
+function queueRemoteRefresh() {
+  if (!app.supabaseClient) return;
+  if (app.remoteRefreshTimer) {
+    window.clearTimeout(app.remoteRefreshTimer);
+  }
+  app.remoteRefreshTimer = window.setTimeout(async () => {
+    const refreshed = await refreshRemoteStats();
+    if (!refreshed) return;
+    renderLiveBoard();
+    if (!app.resultsPanel.hidden) {
+      renderResults(getStoredStatsSnapshot());
+    }
+  }, 160);
+}
+
+function bindRealtimeSync() {
+  if (!app.supabaseClient) return;
+  if (app.realtimeChannel) {
+    app.supabaseClient.removeChannel(app.realtimeChannel);
+    app.realtimeChannel = null;
+  }
+
+  app.realtimeChannel = app.supabaseClient
+    .channel("zero-soda-live")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "ratings" },
+      () => queueRemoteRefresh()
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "submissions" },
+      () => queueRemoteRefresh()
+    )
+    .subscribe();
+}
+
+function createSubmissionId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `sub-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function submitToSupabase(rated) {
+  if (!app.supabaseClient) {
+    throw new Error("Supabase가 연결되지 않았습니다.");
+  }
+
+  const submissionId = createSubmissionId();
+  const { error: submissionError } = await app.supabaseClient
+    .from("submissions")
+    .insert({ id: submissionId });
+  if (submissionError) {
+    throw submissionError;
+  }
+
+  const rows = Object.entries(rated).map(([drinkId, tier]) => ({
+    submission_id: submissionId,
+    drink_id: drinkId,
+    tier
+  }));
+
+  const { error: ratingsError } = await app.supabaseClient
+    .from("ratings")
+    .insert(rows);
+  if (ratingsError) {
+    throw ratingsError;
+  }
+}
+
 function createTierLanes() {
   app.tiersEl.innerHTML = "";
   app.laneContainers = {};
@@ -398,6 +671,31 @@ function createTierLanes() {
 
   app.tiersEl.querySelectorAll(".lane").forEach((lane) => {
     app.laneContainers[lane.dataset.tier] = lane.querySelector(".lane-cards");
+  });
+}
+
+function createLiveTierLanes() {
+  app.liveTiersEl.innerHTML = "";
+  app.liveLaneContainers = {};
+
+  TIERS.forEach((tier) => {
+    const fragment = app.laneTemplate.content.cloneNode(true);
+    const lane = fragment.querySelector(".lane");
+    const label = fragment.querySelector(".lane-label");
+    const cards = fragment.querySelector(".lane-cards");
+
+    lane.dataset.tier = tier;
+    lane.classList.add("live-lane");
+    label.textContent = tier;
+    cards.classList.add("live-lane-cards");
+    cards.classList.remove("dropzone");
+    cards.removeAttribute("data-tier");
+
+    app.liveTiersEl.appendChild(fragment);
+  });
+
+  app.liveTiersEl.querySelectorAll(".lane").forEach((lane) => {
+    app.liveLaneContainers[lane.dataset.tier] = lane.querySelector(".lane-cards");
   });
 }
 
@@ -449,6 +747,55 @@ function applyPreviewImage(imageEl, fallbackEl, item) {
   } else {
     imageEl.removeAttribute("src");
   }
+}
+
+function getConsensusTier(record) {
+  if (!record || record.total <= 0) return null;
+  let weighted = 0;
+  TIERS.forEach((tier) => {
+    weighted += (record.tiers[tier] || 0) * TIER_SCORE[tier];
+  });
+  const average = weighted / record.total;
+  const rounded = Math.max(1, Math.min(7, Math.round(average)));
+  return SCORE_TO_TIER[rounded];
+}
+
+function createLiveCard(item, totalSamples) {
+  const card = document.createElement("article");
+  card.className = "live-card";
+
+  const thumbWrap = document.createElement("div");
+  thumbWrap.className = "live-thumb-wrap";
+
+  const thumbImage = document.createElement("img");
+  thumbImage.className = "live-thumb-image";
+  thumbImage.alt = "";
+
+  const thumbFallback = document.createElement("span");
+  thumbFallback.className = "live-thumb-fallback";
+
+  thumbWrap.appendChild(thumbImage);
+  thumbWrap.appendChild(thumbFallback);
+
+  const body = document.createElement("div");
+  body.className = "live-card-body";
+
+  const name = document.createElement("p");
+  name.className = "live-card-name";
+  name.textContent = item.name;
+
+  const meta = document.createElement("p");
+  meta.className = "live-card-meta";
+  meta.textContent = `표본 ${totalSamples}`;
+
+  body.appendChild(name);
+  body.appendChild(meta);
+
+  card.appendChild(thumbWrap);
+  card.appendChild(body);
+
+  applyPreviewImage(thumbImage, thumbFallback, item);
+  return card;
 }
 
 function setAssignment(itemId, tier) {
@@ -764,6 +1111,26 @@ function syncDetailState() {
   app.detailState.textContent = `현재 상태: ${getCurrentTierLabel(app.detailItemId)}`;
 }
 
+function syncResultTableToggle() {
+  if (!app.toggleResultTableBtn) return;
+  app.toggleResultTableBtn.textContent = app.resultTableWrap.hidden
+    ? "상세 통계표 보기"
+    : "상세 통계표 숨기기";
+}
+
+function enterResultFocus() {
+  app.isResultFocus = true;
+  document.body.classList.add("result-focus");
+  app.editModeBtn.hidden = false;
+  app.liveBoardPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function exitResultFocus() {
+  app.isResultFocus = false;
+  document.body.classList.remove("result-focus");
+  app.editModeBtn.hidden = true;
+}
+
 function render() {
   app.unratedEl.innerHTML = "";
   Object.values(app.laneContainers).forEach((container) => {
@@ -784,6 +1151,7 @@ function render() {
   updateStatusText();
   syncSubmitButton();
   syncDetailState();
+  renderLiveBoard();
   renderSwipePanel();
   renderQuickPanel();
 }
@@ -859,12 +1227,140 @@ function collectRatedAssignments() {
   return rated;
 }
 
-function submitAndShowResults() {
+function snapshotRatedAssignments(rated) {
+  const pairs = app.items
+    .map((item) => [item.id, rated[item.id] || null])
+    .filter((entry) => entry[1]);
+  return JSON.stringify(pairs);
+}
+
+function createPreviewStats() {
+  const base = normalizeStats(getStoredStatsSnapshot());
+  const rated = collectRatedAssignments();
+  const ratedIds = Object.keys(rated);
+  const currentSnapshot = snapshotRatedAssignments(rated);
+
+  const shouldApplyPreview =
+    ratedIds.length > 0 && currentSnapshot !== app.lastSubmittedSnapshot;
+
+  if (!shouldApplyPreview) {
+    return {
+      stats: base,
+      previewCount: 0
+    };
+  }
+
+  const preview = {
+    participants: base.participants + 1,
+    drinks: Object.fromEntries(
+      app.items.map((item) => {
+        const record = base.drinks[item.id] || createZeroRecord();
+        return [
+          item.id,
+          {
+            total: record.total,
+            tiers: Object.fromEntries(TIERS.map((tier) => [tier, record.tiers[tier] || 0]))
+          }
+        ];
+      })
+    )
+  };
+
+  ratedIds.forEach((itemId) => {
+    if (!preview.drinks[itemId]) {
+      preview.drinks[itemId] = createZeroRecord();
+    }
+    const tier = rated[itemId];
+    preview.drinks[itemId].total += 1;
+    preview.drinks[itemId].tiers[tier] += 1;
+  });
+
+  return {
+    stats: preview,
+    previewCount: ratedIds.length
+  };
+}
+
+function renderLiveBoard() {
+  const { stats, previewCount } = createPreviewStats();
+  const grouped = Object.fromEntries(TIERS.map((tier) => [tier, []]));
+  const noSample = [];
+
+  app.items.forEach((item) => {
+    const record = stats.drinks[item.id] || createZeroRecord();
+    if (record.total <= 0) {
+      noSample.push(item);
+      return;
+    }
+    const tier = getConsensusTier(record) || "C";
+    grouped[tier].push({
+      item,
+      total: record.total
+    });
+  });
+
+  TIERS.forEach((tier) => {
+    const container = app.liveLaneContainers[tier];
+    if (!container) return;
+    container.innerHTML = "";
+
+    const sorted = grouped[tier].sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.item.name.localeCompare(b.item.name, "ko");
+    });
+
+    sorted.forEach((entry) => {
+      container.appendChild(createLiveCard(entry.item, entry.total));
+    });
+
+    const lane = app.liveTiersEl.querySelector(`.lane[data-tier="${tier}"]`);
+    const countEl = lane?.querySelector(".lane-count");
+    if (countEl) {
+      countEl.textContent = String(sorted.length);
+    }
+  });
+
+  app.liveNoSample.innerHTML = "";
+  noSample
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"))
+    .forEach((item) => {
+      app.liveNoSample.appendChild(createLiveCard(item, 0));
+    });
+  app.liveNoSampleCount.textContent = String(noSample.length);
+
+  app.liveBoardMeta.textContent =
+    previewCount > 0
+      ? `내 평가 ${previewCount}개 임시 반영 중`
+      : app.useRemoteStats && app.remoteStatsCache
+        ? `전체 사용자 실시간 집계`
+        : `현재 브라우저 저장 집계`;
+}
+
+async function submitAndShowResults() {
   const rated = collectRatedAssignments();
   const ratedIds = Object.keys(rated);
   if (ratedIds.length === 0) {
     window.alert("최소 1개 이상 평가해야 결과를 집계할 수 있어요.");
     return;
+  }
+
+  if (app.useRemoteStats && app.supabaseClient) {
+    try {
+      await submitToSupabase(rated);
+      app.lastSubmittedSnapshot = snapshotRatedAssignments(rated);
+      await refreshRemoteStats();
+      const latest = getStoredStatsSnapshot();
+      renderResults(latest);
+      renderLiveBoard();
+      app.resultsPanel.hidden = true;
+      enterResultFocus();
+      return;
+    } catch {
+      window.alert(
+        "실시간 저장에 실패했습니다. Supabase 테이블/권한 설정을 확인해 주세요."
+      );
+      return;
+    }
   }
 
   const stats = loadStats();
@@ -880,13 +1376,20 @@ function submitAndShowResults() {
   });
 
   saveStats(stats);
+  app.lastSubmittedSnapshot = snapshotRatedAssignments(rated);
   renderResults(stats);
-  app.resultsPanel.hidden = false;
-  app.resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  renderLiveBoard();
+  app.resultsPanel.hidden = true;
+  enterResultFocus();
 }
 
-function viewResultsOnly() {
-  renderResults(loadStats());
+async function viewResultsOnly() {
+  if (app.useRemoteStats && app.supabaseClient) {
+    await refreshRemoteStats();
+  }
+  exitResultFocus();
+  renderResults(getStoredStatsSnapshot());
+  renderLiveBoard();
   app.resultsPanel.hidden = false;
   app.resultsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -896,6 +1399,9 @@ function renderResults(stats) {
   const tierTotals = Object.fromEntries(TIERS.map((tier) => [tier, 0]));
   let totalSamples = 0;
   let drinksWithSamples = 0;
+
+  app.resultTableWrap.hidden = true;
+  syncResultTableToggle();
 
   app.items.forEach((item) => {
     const record = normalized.drinks[item.id] || createZeroRecord();
@@ -1027,7 +1533,7 @@ function saveAdminEdit() {
   saveItems();
   closeAdminEdit();
   render();
-  renderResults(loadStats());
+  renderResults(getStoredStatsSnapshot());
   renderAdminList();
 }
 
@@ -1057,7 +1563,7 @@ function deleteAdminItem(itemId) {
   }
 
   render();
-  renderResults(loadStats());
+  renderResults(getStoredStatsSnapshot());
   renderAdminList();
 }
 
@@ -1132,11 +1638,22 @@ function bindEvents() {
 
   app.resetBtn.addEventListener("click", () => {
     initAssignments();
+    app.lastSubmittedSnapshot = null;
+    exitResultFocus();
+    app.resultsPanel.hidden = true;
     render();
   });
 
   app.submitBtn.addEventListener("click", submitAndShowResults);
+  app.editModeBtn.addEventListener("click", () => {
+    exitResultFocus();
+    app.quickPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   app.viewResultBtn.addEventListener("click", viewResultsOnly);
+  app.toggleResultTableBtn.addEventListener("click", () => {
+    app.resultTableWrap.hidden = !app.resultTableWrap.hidden;
+    syncResultTableToggle();
+  });
 
   app.swipeCard.addEventListener("pointerdown", onSwipePointerDown);
   app.swipeCard.addEventListener("pointermove", onSwipePointerMove);
@@ -1244,15 +1761,27 @@ function bindEvents() {
   });
 }
 
-function boot() {
+async function boot() {
   app.items = loadItems();
   initAssignments();
   createTierLanes();
+  createLiveTierLanes();
   bindEvents();
+  exitResultFocus();
+  const localStats = loadStats();
+  saveStats(localStats);
+
+  app.runtimeConfig = await loadRuntimeConfig();
+  initSupabaseClient();
+  if (app.supabaseClient) {
+    await refreshRemoteStats();
+    if (app.useRemoteStats) {
+      bindRealtimeSync();
+    }
+  }
+
   render();
-  const stats = loadStats();
-  saveStats(stats);
-  renderResults(stats);
+  renderResults(getStoredStatsSnapshot());
 }
 
 boot();

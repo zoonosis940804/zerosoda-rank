@@ -24,6 +24,7 @@
       </div>
       <div class="top-actions">
         <button id="submitBtn" type="button">평가 완료하고 결과 보기</button>
+        <button id="editModeBtn" type="button" hidden>평가 수정하기</button>
         <button id="viewResultBtn" type="button">누적 결과 보기</button>
         <button id="adminBtn" type="button">관리자 모드</button>
         <button id="resetBtn" type="button">내 평가 초기화</button>
@@ -33,7 +34,9 @@
     <section class="guide panel">
       <p>평가는 선택하여 하실 수 있습니다. 안 마셔본 음료는 건너뛰기(미평가)로 남겨두세요.</p>
       <p>모바일에서는 드래그 대신 아래 <strong>스와이프 평가</strong> 또는 <strong>빠른 평가</strong>로 바로 평가할 수 있습니다.</p>
-      <p>평가를 마치면 <strong>평가 완료하고 결과 보기</strong>로 누적 결과를 확인할 수 있습니다. 모두 평가할수록 결과 신뢰도가 올라갑니다.</p>
+      <p><strong>실시간 선호 보드</strong>는 현재 저장 집계에 내 평가를 임시 반영해 즉시 갱신됩니다.</p>
+      <p><strong>Supabase를 연결하면</strong> 전체 사용자 기준 실시간 집계로 바뀝니다.</p>
+      <p>평가를 마치면 <strong>평가 완료하고 결과 보기</strong>를 누르는 즉시 실시간 선호 보드만 크게 표시됩니다. 수정이 필요하면 <strong>평가 수정하기</strong>를 누르세요.</p>
       <p id="statusText" class="status-text">현재 0개 평가됨 / 18개 미평가</p>
     </section>
 
@@ -126,6 +129,22 @@
         <div id="tiers" class="tiers"></div>
       </section>
 
+      <section id="liveBoardPanel" class="live-board panel">
+        <div class="panel-head">
+          <h2>실시간 선호 보드</h2>
+          <span id="liveBoardMeta" class="chip">집계 불러오는 중</span>
+        </div>
+        <p class="panel-sub">
+          내 평가가 임시 반영되어 음료별 선호 등급이 실시간으로 바뀝니다.
+        </p>
+        <div id="liveTiers" class="tiers live-tiers"></div>
+        <div class="panel-head live-empty-head">
+          <h3>표본 없음</h3>
+          <span id="liveNoSampleCount" class="chip">0</span>
+        </div>
+        <div id="liveNoSample" class="cards live-no-sample"></div>
+      </section>
+
       <section id="resultsPanel" class="results panel" hidden>
         <div class="panel-head">
           <h2>누적 결과</h2>
@@ -146,7 +165,10 @@
           </article>
         </div>
         <div id="tierTotals" class="tier-totals"></div>
-        <div class="table-wrap">
+        <div class="result-table-actions">
+          <button id="toggleResultTableBtn" type="button">상세 통계표 보기</button>
+        </div>
+        <div id="resultTableWrap" class="table-wrap" hidden>
           <table>
             <thead>
               <tr>
@@ -260,6 +282,7 @@
       <a href="mailto:Zenith1005@proton.me">Zenith1005@proton.me</a>
     </p>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="./app.js"></script>
   </body>
 </html>
