@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>제로탄산 취향연구소</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a" aria-hidden="true"></div>
+    <div class="bg-orb orb-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">제로탄산 맛 평가 모음</p>
+        <h1>제로탄산 취향연구소</h1>
+        <p class="criterion">평가 기준: 종합 맛</p>
+      </div>
+      <div class="top-actions">
+        <button id="submitBtn" type="button">평가 완료하고 결과 보기</button>
+        <button id="viewResultBtn" type="button">누적 결과 보기</button>
+        <button id="adminBtn" type="button">관리자 모드</button>
+        <button id="resetBtn" type="button">내 평가 초기화</button>
+      </div>
+    </header>
+
+    <section class="guide panel">
+      <p>평가는 선택하여 하실 수 있습니다. 안 마셔본 음료는 건너뛰기(미평가)로 남겨두세요.</p>
+      <p>평가를 마치면 <strong>평가 완료하고 결과 보기</strong>로 누적 결과를 확인할 수 있습니다. 모두 평가할수록 결과 신뢰도가 올라갑니다.</p>
+      <p id="statusText" class="status-text">현재 0개 평가됨 / 18개 미평가</p>
+    </section>
+
+    <main class="layout">
+      <section class="deck panel">
+        <div class="panel-head">
+          <h2>미평가 덱</h2>
+          <span id="unratedCount" class="chip">0</span>
+        </div>
+        <p class="panel-sub">카드를 끌어서 S~F 등급 칸에 놓으세요.</p>
+        <div id="unrated" class="dropzone cards" data-tier="UNRATED"></div>
+      </section>
+
+      <section class="board panel">
+        <div class="panel-head">
+          <h2>등급 보드</h2>
+          <span class="chip">S-A-B-C-D-E-F</span>
+        </div>
+        <div id="tiers" class="tiers"></div>
+      </section>
+
+      <section id="resultsPanel" class="results panel" hidden>
+        <div class="panel-head">
+          <h2>누적 결과</h2>
+          <span id="participantCount" class="chip">참가자 0명</span>
+        </div>
+        <div class="summary-grid">
+          <article class="summary-box">
+            <p class="summary-label">전체 참가자</p>
+            <p id="summaryParticipants" class="summary-value">0</p>
+          </article>
+          <article class="summary-box">
+            <p class="summary-label">전체 표본 수</p>
+            <p id="summarySamples" class="summary-value">0</p>
+          </article>
+          <article class="summary-box">
+            <p class="summary-label">표본 있는 음료</p>
+            <p id="summaryDrinks" class="summary-value">0</p>
+          </article>
+        </div>
+        <div id="tierTotals" class="tier-totals"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>음료</th>
+                <th>총 표본</th>
+                <th>S</th>
+                <th>A</th>
+                <th>B</th>
+                <th>C</th>
+                <th>D</th>
+                <th>E</th>
+                <th>F</th>
+              </tr>
+            </thead>
+            <tbody id="resultTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="adminPanel" class="admin panel" hidden>
+        <div class="panel-head">
+          <h2>관리자 모드</h2>
+          <span id="adminStateChip" class="chip">잠금됨</span>
+        </div>
+        <p class="panel-sub">개별 항목의 이름, 대표 이미지, 색상 수정 및 삭제가 가능합니다.</p>
+        <div id="adminList" class="admin-list"></div>
+      </section>
+    </main>
+
+    <template id="cardTemplate">
+      <article class="card" draggable="true">
+        <div class="thumb-wrap" aria-hidden="true">
+          <img class="thumb-image" alt="" />
+          <span class="thumb-fallback"></span>
+        </div>
+        <div class="swatch" aria-hidden="true"></div>
+        <p class="name"></p>
+        <button type="button" class="detail-btn" draggable="false">상세</button>
+      </article>
+    </template>
+
+    <template id="laneTemplate">
+      <div class="lane">
+        <div class="lane-label-wrap">
+          <span class="lane-label"></span>
+          <span class="lane-count">0</span>
+        </div>
+        <div class="dropzone lane-cards"></div>
+      </div>
+    </template>
+
+    <div id="detailModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-modal="true"></div>
+      <section
+        class="modal-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detailTitle"
+      >
+        <button id="closeModalBtn" class="modal-close" type="button">닫기</button>
+        <h3 id="detailTitle" class="modal-title"></h3>
+        <div class="detail-image-wrap">
+          <img id="detailImage" class="detail-image" alt="" />
+          <div id="detailFallback" class="detail-fallback"></div>
+        </div>
+        <p id="detailState" class="detail-state"></p>
+        <button id="passBtn" class="pass-btn" type="button">건너뛰기(미평가 유지)</button>
+      </section>
+    </div>
+
+    <div id="adminLoginModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-admin-login="true"></div>
+      <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle">
+        <button id="closeAdminLoginBtn" class="modal-close" type="button">닫기</button>
+        <h3 id="adminLoginTitle" class="modal-title">관리자 인증</h3>
+        <p class="detail-state">관리자 비밀번호를 입력해 주세요.</p>
+        <label class="admin-field-label" for="adminPasswordInput">비밀번호</label>
+        <input id="adminPasswordInput" class="admin-input" type="password" inputmode="numeric" />
+        <p id="adminLoginMsg" class="admin-login-msg"></p>
+        <button id="adminLoginConfirmBtn" class="pass-btn" type="button">잠금 해제</button>
+      </section>
+    </div>
+
+    <div id="adminEditModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close-admin-edit="true"></div>
+      <section class="modal-sheet" role="dialog" aria-modal="true" aria-labelledby="adminEditTitle">
+        <button id="closeAdminEditBtn" class="modal-close" type="button">닫기</button>
+        <h3 id="adminEditTitle" class="modal-title">항목 수정</h3>
+        <label class="admin-field-label" for="adminEditName">이름</label>
+        <input id="adminEditName" class="admin-input" type="text" />
+        <label class="admin-field-label" for="adminEditColor">대표 색상</label>
+        <input id="adminEditColor" class="admin-input" type="text" placeholder="#1A73E8" />
+        <label class="admin-field-label" for="adminEditImage">대표 이미지 주소</label>
+        <input id="adminEditImage" class="admin-input" type="text" placeholder="https://이미지주소" />
+        <p id="adminEditMsg" class="admin-login-msg"></p>
+        <button id="adminEditSaveBtn" class="pass-btn" type="button">저장</button>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
