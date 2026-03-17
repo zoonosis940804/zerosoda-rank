@@ -1,4 +1,5 @@
 const TIERS = ["S", "A", "B", "C", "D", "E", "F"];
+const SWIPE_TIER_SCALE = ["F", "E", "D", "C", "B", "A", "S"];
 const STATS_STORAGE_KEY = "zero-soda-tier-lab-stats-v1";
 const ITEMS_STORAGE_KEY = "zero-soda-tier-lab-items-v1";
 const ADMIN_PASSWORD = "3431";
@@ -145,6 +146,15 @@ const app = {
   laneContainers: {},
   detailItemId: null,
   editingItemId: null,
+  activeQuickItemId: null,
+  activeSwipeItemId: null,
+  swipePointerId: null,
+  swipeStartX: 0,
+  swipeStartY: 0,
+  swipeOffsetX: 0,
+  swipeOffsetY: 0,
+  swipePreviewTier: "C",
+  swipePassReady: false,
   isAdminUnlocked: false,
   unratedEl: document.getElementById("unrated"),
   tiersEl: document.getElementById("tiers"),
@@ -169,6 +179,29 @@ const app = {
   detailState: document.getElementById("detailState"),
   closeModalBtn: document.getElementById("closeModalBtn"),
   passBtn: document.getElementById("passBtn"),
+  quickProgress: document.getElementById("quickProgress"),
+  quickItemSelect: document.getElementById("quickItemSelect"),
+  quickCard: document.getElementById("quickCard"),
+  quickImage: document.getElementById("quickImage"),
+  quickFallback: document.getElementById("quickFallback"),
+  quickName: document.getElementById("quickName"),
+  quickState: document.getElementById("quickState"),
+  quickDetailBtn: document.getElementById("quickDetailBtn"),
+  quickTierButtons: document.getElementById("quickTierButtons"),
+  quickEmpty: document.getElementById("quickEmpty"),
+  swipePanel: document.getElementById("swipePanel"),
+  swipeProgress: document.getElementById("swipeProgress"),
+  swipeTierGuide: document.getElementById("swipeTierGuide"),
+  swipeHint: document.getElementById("swipeHint"),
+  swipeCard: document.getElementById("swipeCard"),
+  swipeImage: document.getElementById("swipeImage"),
+  swipeFallback: document.getElementById("swipeFallback"),
+  swipeName: document.getElementById("swipeName"),
+  swipeState: document.getElementById("swipeState"),
+  swipeCenterBtn: document.getElementById("swipeCenterBtn"),
+  swipePassBtn: document.getElementById("swipePassBtn"),
+  swipeDetailBtn: document.getElementById("swipeDetailBtn"),
+  swipeEmpty: document.getElementById("swipeEmpty"),
   adminBtn: document.getElementById("adminBtn"),
   adminPanel: document.getElementById("adminPanel"),
   adminStateChip: document.getElementById("adminStateChip"),
@@ -388,6 +421,263 @@ function findItem(itemId) {
   return app.items.find((item) => item.id === itemId);
 }
 
+function getUnratedItems() {
+  return app.items.filter((item) => app.assignments[item.id] === "UNRATED");
+}
+
+function applyPreviewImage(imageEl, fallbackEl, item) {
+  fallbackEl.textContent = shortLabel(item.name);
+  fallbackEl.style.background = `linear-gradient(145deg, ${item.color}, ${darkenHex(
+    item.color,
+    28
+  )})`;
+
+  imageEl.style.display = "none";
+  fallbackEl.style.display = "grid";
+
+  imageEl.onload = () => {
+    imageEl.style.display = "block";
+    fallbackEl.style.display = "none";
+  };
+  imageEl.onerror = () => {
+    imageEl.style.display = "none";
+    fallbackEl.style.display = "grid";
+  };
+
+  if (item.image) {
+    imageEl.src = item.image;
+  } else {
+    imageEl.removeAttribute("src");
+  }
+}
+
+function setAssignment(itemId, tier) {
+  if (!itemId || !(itemId in app.assignments)) return;
+  app.assignments[itemId] = tier;
+  render();
+}
+
+function focusNextQuickItem() {
+  const unratedItems = getUnratedItems();
+  if (unratedItems.length === 0) {
+    app.activeQuickItemId = null;
+    return;
+  }
+
+  const currentIndex = unratedItems.findIndex(
+    (item) => item.id === app.activeQuickItemId
+  );
+  const nextIndex =
+    currentIndex >= 0 ? (currentIndex + 1) % unratedItems.length : 0;
+  app.activeQuickItemId = unratedItems[nextIndex].id;
+}
+
+function renderQuickPanel() {
+  const unratedItems = getUnratedItems();
+  app.quickProgress.textContent = `남은 미평가 ${unratedItems.length} / 전체 ${app.items.length}`;
+
+  app.quickItemSelect.innerHTML = "";
+
+  if (unratedItems.length === 0) {
+    app.activeQuickItemId = null;
+    app.quickItemSelect.disabled = true;
+    app.quickCard.hidden = true;
+    app.quickTierButtons.hidden = true;
+    app.quickEmpty.hidden = false;
+
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "미평가 음료 없음";
+    app.quickItemSelect.appendChild(option);
+    return;
+  }
+
+  if (
+    !app.activeQuickItemId ||
+    !unratedItems.some((item) => item.id === app.activeQuickItemId)
+  ) {
+    app.activeQuickItemId = unratedItems[0].id;
+  }
+
+  app.quickItemSelect.disabled = false;
+  app.quickEmpty.hidden = true;
+  app.quickCard.hidden = false;
+  app.quickTierButtons.hidden = false;
+
+  unratedItems.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name;
+    option.selected = item.id === app.activeQuickItemId;
+    app.quickItemSelect.appendChild(option);
+  });
+
+  const selected = findItem(app.activeQuickItemId);
+  if (!selected) return;
+
+  app.quickName.textContent = selected.name;
+  app.quickState.textContent = `현재 상태: ${getCurrentTierLabel(selected.id)}`;
+  applyPreviewImage(app.quickImage, app.quickFallback, selected);
+}
+
+function getSwipeTierByOffset(offsetX) {
+  const clamped = Math.max(-210, Math.min(210, offsetX));
+  const scaled = Math.round((clamped / 210) * 3);
+  const index = Math.max(0, Math.min(SWIPE_TIER_SCALE.length - 1, scaled + 3));
+  return SWIPE_TIER_SCALE[index];
+}
+
+function setSwipeGuideActive(tier) {
+  app.swipeTierGuide.querySelectorAll(".swipe-tier").forEach((badge) => {
+    badge.classList.toggle("active", !!tier && badge.dataset.tier === tier);
+  });
+}
+
+function setSwipeHint(text) {
+  app.swipeHint.textContent = text;
+}
+
+function resetSwipeCardVisual() {
+  app.swipeCard.style.transform = "";
+  app.swipeCard.classList.remove("dragging");
+  app.swipeCard.classList.remove("pass-ready");
+  app.swipeOffsetX = 0;
+  app.swipeOffsetY = 0;
+  app.swipePassReady = false;
+  app.swipePreviewTier = "C";
+  setSwipeGuideActive("C");
+  setSwipeHint("현재 선택: C");
+}
+
+function focusNextSwipeItem() {
+  const unratedItems = getUnratedItems();
+  if (unratedItems.length === 0) {
+    app.activeSwipeItemId = null;
+    return;
+  }
+  const currentIndex = unratedItems.findIndex(
+    (item) => item.id === app.activeSwipeItemId
+  );
+  const nextIndex =
+    currentIndex >= 0 ? (currentIndex + 1) % unratedItems.length : 0;
+  app.activeSwipeItemId = unratedItems[nextIndex].id;
+}
+
+function applySwipeTier(tier) {
+  if (!app.activeSwipeItemId) return;
+  if (tier === "UNRATED") {
+    focusNextSwipeItem();
+    renderSwipePanel();
+    return;
+  }
+  if (!TIERS.includes(tier)) return;
+  setAssignment(app.activeSwipeItemId, tier);
+}
+
+function renderSwipePanel() {
+  const unratedItems = getUnratedItems();
+  app.swipeProgress.textContent = `남은 미평가 ${unratedItems.length} / 전체 ${app.items.length}`;
+
+  if (unratedItems.length === 0) {
+    app.activeSwipeItemId = null;
+    app.swipeCard.hidden = true;
+    app.swipeEmpty.hidden = false;
+    app.swipeCenterBtn.disabled = true;
+    app.swipePassBtn.disabled = true;
+    app.swipeDetailBtn.disabled = true;
+    setSwipeGuideActive(null);
+    setSwipeHint("현재 선택: 없음");
+    return;
+  }
+
+  if (
+    !app.activeSwipeItemId ||
+    !unratedItems.some((item) => item.id === app.activeSwipeItemId)
+  ) {
+    app.activeSwipeItemId = unratedItems[0].id;
+  }
+
+  const selected = findItem(app.activeSwipeItemId);
+  if (!selected) return;
+
+  app.swipeCard.hidden = false;
+  app.swipeEmpty.hidden = true;
+  app.swipeCenterBtn.disabled = false;
+  app.swipePassBtn.disabled = false;
+  app.swipeDetailBtn.disabled = false;
+  app.swipeName.textContent = selected.name;
+  app.swipeState.textContent = `현재 상태: ${getCurrentTierLabel(selected.id)}`;
+  applyPreviewImage(app.swipeImage, app.swipeFallback, selected);
+  resetSwipeCardVisual();
+}
+
+function onSwipePointerDown(event) {
+  if (!app.activeSwipeItemId || app.swipeCard.hidden) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+
+  app.swipePointerId = event.pointerId;
+  app.swipeStartX = event.clientX;
+  app.swipeStartY = event.clientY;
+  app.swipeOffsetX = 0;
+  app.swipeOffsetY = 0;
+  app.swipeCard.classList.add("dragging");
+  app.swipeCard.setPointerCapture(event.pointerId);
+}
+
+function onSwipePointerMove(event) {
+  if (app.swipePointerId !== event.pointerId) return;
+  const dx = event.clientX - app.swipeStartX;
+  const dy = event.clientY - app.swipeStartY;
+  const rotate = Math.max(-14, Math.min(14, dx / 14));
+
+  app.swipeOffsetX = dx;
+  app.swipeOffsetY = dy;
+  app.swipeCard.style.transform = `translate(${dx}px, ${dy}px) rotate(${rotate}deg)`;
+
+  const passReady = dy > 100 && dy > Math.abs(dx) * 0.9;
+  app.swipePassReady = passReady;
+  app.swipeCard.classList.toggle("pass-ready", passReady);
+
+  if (passReady) {
+    setSwipeGuideActive(null);
+    setSwipeHint("아래로 건너뛰기 준비");
+    return;
+  }
+
+  const tier = getSwipeTierByOffset(dx);
+  app.swipePreviewTier = tier;
+  setSwipeGuideActive(tier);
+  setSwipeHint(`현재 선택: ${tier}`);
+}
+
+function finishSwipePointer(event, canceled = false) {
+  if (app.swipePointerId !== event.pointerId) return;
+
+  if (app.swipeCard.hasPointerCapture(event.pointerId)) {
+    app.swipeCard.releasePointerCapture(event.pointerId);
+  }
+
+  const dx = app.swipeOffsetX;
+  const dy = app.swipeOffsetY;
+  const shouldPass = !canceled && dy > 120 && dy > Math.abs(dx) * 0.9;
+  const shouldRate = !canceled && Math.abs(dx) > 52;
+  const tier = getSwipeTierByOffset(dx);
+
+  app.swipePointerId = null;
+
+  if (shouldPass) {
+    applySwipeTier("UNRATED");
+    return;
+  }
+
+  if (shouldRate) {
+    applySwipeTier(tier);
+    return;
+  }
+
+  resetSwipeCardVisual();
+}
+
 function createCard(item) {
   const fragment = app.cardTemplate.content.cloneNode(true);
   const card = fragment.querySelector(".card");
@@ -400,23 +690,7 @@ function createCard(item) {
   card.dataset.id = item.id;
   name.textContent = item.name;
   swatch.style.background = item.color;
-  thumbFallback.textContent = shortLabel(item.name);
-  thumbFallback.style.background = `linear-gradient(145deg, ${item.color}, ${darkenHex(
-    item.color,
-    28
-  )})`;
-
-  if (item.image) {
-    thumbImage.onload = () => {
-      thumbImage.style.display = "block";
-      thumbFallback.style.display = "none";
-    };
-    thumbImage.onerror = () => {
-      thumbImage.style.display = "none";
-      thumbFallback.style.display = "grid";
-    };
-    thumbImage.src = item.image;
-  }
+  applyPreviewImage(thumbImage, thumbFallback, item);
 
   detailBtn.addEventListener("click", (event) => {
     event.preventDefault();
@@ -424,14 +698,26 @@ function createCard(item) {
     openDetail(item.id);
   });
 
-  card.addEventListener("dragstart", (event) => {
-    event.dataTransfer.setData("text/plain", item.id);
-    card.classList.add("dragging");
-  });
+  const dragEnabled =
+    typeof window.matchMedia !== "function"
+      ? true
+      : !window.matchMedia("(pointer: coarse)").matches;
+  card.draggable = dragEnabled;
 
-  card.addEventListener("dragend", () => {
-    card.classList.remove("dragging");
-  });
+  if (dragEnabled) {
+    card.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData("text/plain", item.id);
+      card.classList.add("dragging");
+    });
+
+    card.addEventListener("dragend", () => {
+      card.classList.remove("dragging");
+    });
+  } else {
+    card.addEventListener("click", () => {
+      openDetail(item.id);
+    });
+  }
 
   return fragment;
 }
@@ -498,6 +784,8 @@ function render() {
   updateStatusText();
   syncSubmitButton();
   syncDetailState();
+  renderSwipePanel();
+  renderQuickPanel();
 }
 
 function registerDropzone(zone) {
@@ -516,8 +804,7 @@ function registerDropzone(zone) {
     const itemId = event.dataTransfer.getData("text/plain");
     const tier = zone.dataset.tier || "UNRATED";
     if (!itemId || !(itemId in app.assignments)) return;
-    app.assignments[itemId] = tier;
-    render();
+    setAssignment(itemId, tier);
   });
 }
 
@@ -528,29 +815,7 @@ function openDetail(itemId) {
   app.detailItemId = itemId;
   app.detailTitle.textContent = item.name;
   app.detailState.textContent = `현재 상태: ${getCurrentTierLabel(itemId)}`;
-  app.detailFallback.textContent = shortLabel(item.name);
-  app.detailFallback.style.background = `linear-gradient(145deg, ${item.color}, ${darkenHex(
-    item.color,
-    28
-  )})`;
-
-  app.detailImage.style.display = "none";
-  app.detailFallback.style.display = "grid";
-
-  app.detailImage.onload = () => {
-    app.detailImage.style.display = "block";
-    app.detailFallback.style.display = "none";
-  };
-  app.detailImage.onerror = () => {
-    app.detailImage.style.display = "none";
-    app.detailFallback.style.display = "grid";
-  };
-
-  if (item.image) {
-    app.detailImage.src = item.image;
-  } else {
-    app.detailImage.removeAttribute("src");
-  }
+  applyPreviewImage(app.detailImage, app.detailFallback, item);
 
   app.detailModal.hidden = false;
 }
@@ -562,9 +827,25 @@ function closeDetail() {
 
 function markAsPass() {
   if (!app.detailItemId) return;
-  app.assignments[app.detailItemId] = "UNRATED";
-  render();
+  setAssignment(app.detailItemId, "UNRATED");
   closeDetail();
+}
+
+function markFromDetail(tier) {
+  if (!app.detailItemId || !TIERS.includes(tier)) return;
+  setAssignment(app.detailItemId, tier);
+  closeDetail();
+}
+
+function applyQuickTier(tier) {
+  if (!app.activeQuickItemId) return;
+  if (tier === "UNRATED") {
+    focusNextQuickItem();
+    renderQuickPanel();
+    return;
+  }
+  if (!TIERS.includes(tier)) return;
+  setAssignment(app.activeQuickItemId, tier);
 }
 
 function collectRatedAssignments() {
@@ -856,6 +1137,49 @@ function bindEvents() {
 
   app.submitBtn.addEventListener("click", submitAndShowResults);
   app.viewResultBtn.addEventListener("click", viewResultsOnly);
+
+  app.swipeCard.addEventListener("pointerdown", onSwipePointerDown);
+  app.swipeCard.addEventListener("pointermove", onSwipePointerMove);
+  app.swipeCard.addEventListener("pointerup", (event) => {
+    finishSwipePointer(event, false);
+  });
+  app.swipeCard.addEventListener("pointercancel", (event) => {
+    finishSwipePointer(event, true);
+  });
+  app.swipeCenterBtn.addEventListener("click", () => {
+    applySwipeTier("C");
+  });
+  app.swipePassBtn.addEventListener("click", () => {
+    applySwipeTier("UNRATED");
+  });
+  app.swipeDetailBtn.addEventListener("click", () => {
+    if (!app.activeSwipeItemId) return;
+    openDetail(app.activeSwipeItemId);
+  });
+
+  app.quickItemSelect.addEventListener("change", () => {
+    app.activeQuickItemId = app.quickItemSelect.value || null;
+    renderQuickPanel();
+  });
+  app.quickDetailBtn.addEventListener("click", () => {
+    if (!app.activeQuickItemId) return;
+    openDetail(app.activeQuickItemId);
+  });
+  app.quickTierButtons.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) return;
+    const tier = target.dataset.tier;
+    if (!tier) return;
+    applyQuickTier(tier);
+  });
+
+  document.querySelectorAll(".modal-tier-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const tier = button.dataset.tier;
+      if (!tier) return;
+      markFromDetail(tier);
+    });
+  });
 
   app.passBtn.addEventListener("click", markAsPass);
   app.closeModalBtn.addEventListener("click", closeDetail);

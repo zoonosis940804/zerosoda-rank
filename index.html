@@ -32,11 +32,83 @@
 
     <section class="guide panel">
       <p>평가는 선택하여 하실 수 있습니다. 안 마셔본 음료는 건너뛰기(미평가)로 남겨두세요.</p>
+      <p>모바일에서는 드래그 대신 아래 <strong>스와이프 평가</strong> 또는 <strong>빠른 평가</strong>로 바로 평가할 수 있습니다.</p>
       <p>평가를 마치면 <strong>평가 완료하고 결과 보기</strong>로 누적 결과를 확인할 수 있습니다. 모두 평가할수록 결과 신뢰도가 올라갑니다.</p>
       <p id="statusText" class="status-text">현재 0개 평가됨 / 18개 미평가</p>
     </section>
 
     <main class="layout">
+      <section id="swipePanel" class="swipe panel">
+        <div class="panel-head">
+          <h2>스와이프 평가</h2>
+          <span id="swipeProgress" class="chip">남은 미평가 0 / 전체 0</span>
+        </div>
+        <p class="panel-sub">카드를 좌우로 밀면 등급이 선택됩니다. 아래로 밀면 건너뛰기입니다.</p>
+        <div id="swipeTierGuide" class="swipe-tier-guide">
+          <span class="swipe-tier" data-tier="F">F</span>
+          <span class="swipe-tier" data-tier="E">E</span>
+          <span class="swipe-tier" data-tier="D">D</span>
+          <span class="swipe-tier" data-tier="C">C</span>
+          <span class="swipe-tier" data-tier="B">B</span>
+          <span class="swipe-tier" data-tier="A">A</span>
+          <span class="swipe-tier" data-tier="S">S</span>
+        </div>
+        <p id="swipeHint" class="swipe-hint">현재 선택: C</p>
+
+        <article id="swipeCard" class="swipe-card" hidden>
+          <div class="swipe-image-wrap">
+            <img id="swipeImage" class="swipe-image" alt="" />
+            <div id="swipeFallback" class="swipe-fallback"></div>
+          </div>
+          <p id="swipeName" class="swipe-name"></p>
+          <p id="swipeState" class="swipe-state"></p>
+        </article>
+
+        <div class="swipe-actions">
+          <button id="swipeCenterBtn" type="button">C로 평가</button>
+          <button id="swipePassBtn" type="button">건너뛰기</button>
+          <button id="swipeDetailBtn" type="button">대표 이미지 자세히</button>
+        </div>
+        <p id="swipeEmpty" class="swipe-empty" hidden>미평가 음료가 없습니다.</p>
+      </section>
+
+      <section id="quickPanel" class="quick panel">
+        <div class="panel-head">
+          <h2>빠른 평가</h2>
+          <span id="quickProgress" class="chip">남은 미평가 0 / 전체 0</span>
+        </div>
+        <p class="panel-sub">드래그 없이 선택과 버튼만으로 평가할 수 있습니다.</p>
+        <label class="quick-label" for="quickItemSelect">평가할 음료 선택</label>
+        <select id="quickItemSelect" class="quick-select"></select>
+
+        <article id="quickCard" class="quick-card" hidden>
+          <div class="quick-image-wrap">
+            <img id="quickImage" class="quick-image" alt="" />
+            <div id="quickFallback" class="quick-fallback"></div>
+          </div>
+          <div class="quick-meta">
+            <p id="quickName" class="quick-name"></p>
+            <p id="quickState" class="quick-state"></p>
+            <button id="quickDetailBtn" type="button" class="detail-btn quick-detail-btn">
+              대표 이미지 자세히
+            </button>
+          </div>
+        </article>
+
+        <div id="quickTierButtons" class="quick-tier-buttons" hidden>
+          <button type="button" class="quick-tier-btn" data-tier="S">S</button>
+          <button type="button" class="quick-tier-btn" data-tier="A">A</button>
+          <button type="button" class="quick-tier-btn" data-tier="B">B</button>
+          <button type="button" class="quick-tier-btn" data-tier="C">C</button>
+          <button type="button" class="quick-tier-btn" data-tier="D">D</button>
+          <button type="button" class="quick-tier-btn" data-tier="E">E</button>
+          <button type="button" class="quick-tier-btn" data-tier="F">F</button>
+          <button type="button" class="quick-tier-btn pass" data-tier="UNRATED">건너뛰기</button>
+        </div>
+
+        <p id="quickEmpty" class="quick-empty" hidden>미평가 음료가 없습니다.</p>
+      </section>
+
       <section class="deck panel">
         <div class="panel-head">
           <h2>미평가 덱</h2>
@@ -141,6 +213,15 @@
           <div id="detailFallback" class="detail-fallback"></div>
         </div>
         <p id="detailState" class="detail-state"></p>
+        <div class="modal-tier-buttons">
+          <button type="button" class="modal-tier-btn" data-tier="S">S</button>
+          <button type="button" class="modal-tier-btn" data-tier="A">A</button>
+          <button type="button" class="modal-tier-btn" data-tier="B">B</button>
+          <button type="button" class="modal-tier-btn" data-tier="C">C</button>
+          <button type="button" class="modal-tier-btn" data-tier="D">D</button>
+          <button type="button" class="modal-tier-btn" data-tier="E">E</button>
+          <button type="button" class="modal-tier-btn" data-tier="F">F</button>
+        </div>
         <button id="passBtn" class="pass-btn" type="button">건너뛰기(미평가 유지)</button>
       </section>
     </div>
@@ -173,6 +254,11 @@
         <button id="adminEditSaveBtn" class="pass-btn" type="button">저장</button>
       </section>
     </div>
+
+    <p class="contact-fixed">
+      문의사항:
+      <a href="mailto:Zenith1005@proton.me">Zenith1005@proton.me</a>
+    </p>
 
     <script src="./app.js"></script>
   </body>
